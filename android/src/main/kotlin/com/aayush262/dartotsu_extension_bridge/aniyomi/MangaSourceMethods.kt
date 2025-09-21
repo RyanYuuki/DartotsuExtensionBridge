@@ -1,11 +1,13 @@
 package com.aayush262.dartotsu_extension_bridge.aniyomi
 
 import android.util.Log
+import eu.kanade.tachiyomi.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -14,6 +16,8 @@ import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.regex.Matcher
+import java.util.regex.Pattern
 
 class MangaSourceMethods(sourceID: String, langIndex: Int = 0) : AniyomiSourceMethods {
 
@@ -29,6 +33,8 @@ class MangaSourceMethods(sourceID: String, langIndex: Int = 0) : AniyomiSourceMe
         source = src as? HttpSource ?: src as? CatalogueSource
                 ?: throw IllegalArgumentException("Source with ID '$sourceID' is not an HttpSource or CatalogueSource")
     }
+
+    override var baseUrl = (source as? HttpSource)?.baseUrl
 
     override suspend fun getPopular(page: Int): AnimesPage {
         return mangaPageToAnimePage(source.getPopularManga(page))
@@ -57,7 +63,15 @@ class MangaSourceMethods(sourceID: String, langIndex: Int = 0) : AniyomiSourceMe
     }
 
     override suspend fun getPageList( chapter: SChapter): List<Page> {
-       return source.getPageList(chapter)
+       return (source).getPageList(chapter)
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        if (source is ConfigurableSource) {
+            source.setupPreferenceScreen(screen)
+        } else {
+            throw NoPreferenceScreenException("This source does not support preferences.")
+        }
     }
 
     override suspend fun getEpisodeList(media: SAnime): List<SEpisode> {
@@ -80,7 +94,7 @@ class MangaSourceMethods(sourceID: String, langIndex: Int = 0) : AniyomiSourceMe
             override var url: String = chapter.url
             override var name: String = chapter.name
             override var date_upload: Long = chapter.date_upload
-            override var episode_number: Float = chapter.chapter_number
+            override var episode_number: Float = findChapterNumber(chapter.name) ?: chapter.chapter_number
             override var scanlator: String? = chapter.scanlator
         }
     }
@@ -105,30 +119,52 @@ class MangaSourceMethods(sourceID: String, langIndex: Int = 0) : AniyomiSourceMe
         val manga = this
 
         return object : SAnime {
-            override var url: String = try {
-                manga.url
-            } catch (e: UninitializedPropertyAccessException) {
-                Log.d("AniyomiExtensionBridge", "Uninitialized URL for SManga: ${manga.title}")
+            override var url: String = runCatching { manga.url }.getOrElse {
+                Log.d("AniyomiExtensionBridge", "Uninitialized URL for SManga: ${safeUrl(manga)}")
                 "[UNINITIALIZED_URL]"
             }
 
-            override var title: String = try {
-                manga.title
-            } catch (e: UninitializedPropertyAccessException) {
-                Log.d("AniyomiExtensionBridge", "Uninitialized title for SManga: ${manga.url}")
+            override var title: String = runCatching { manga.title }.getOrElse {
+                Log.d("AniyomiExtensionBridge", "Uninitialized title for SManga: ${safeTitle(manga)}")
                 "[UNINITIALIZED_TITLE]"
             }
 
-            override var artist: String? = manga.artist
-            override var author: String? = manga.author
-            override var description: String? = manga.description
-            override var genre: String? = manga.genre
-            override var status: Int = manga.status
-            override var thumbnail_url: String? = manga.thumbnail_url
-            override var update_strategy: UpdateStrategy = manga.update_strategy
-            override var initialized: Boolean = manga.initialized
+            override var artist: String? = runCatching { manga.artist }.getOrNull()
+            override var author: String? = runCatching { manga.author }.getOrNull()
+            override var description: String? = runCatching { manga.description }.getOrNull()
+            override var genre: String? = runCatching { manga.genre }.getOrNull()
+            override var status: Int = runCatching { manga.status }.getOrDefault(SAnime.UNKNOWN)
+            override var thumbnail_url: String? = runCatching { manga.thumbnail_url }.getOrNull()
+            override var update_strategy: UpdateStrategy =
+                runCatching { manga.update_strategy }.getOrDefault(UpdateStrategy.ALWAYS_UPDATE)
+            override var initialized: Boolean = runCatching { manga.initialized }.getOrDefault(false)
         }
     }
+    private fun safeTitle(manga: SManga): String =
+        runCatching { manga.title }.getOrElse { "[UNINITIALIZED_TITLE]" }
 
+    private fun safeUrl(manga: SManga): String =
+        runCatching { manga.url }.getOrElse { "[UNINITIALIZED_URL]" }
+    private val REGEX_ITEM = "[\\s:.\\-]*(\\d+\\.?\\d*)[\\s:.\\-]*"
+    private val REGEX_PART_NUMBER = "(?<!part\\s)\\b(\\d+)\\b"
+    private val REGEX_CHAPTER = "(chapter|chap|ch|c)${REGEX_ITEM}"
+    fun findChapterNumber(text: String): Float? {
+        val pattern: Pattern = Pattern.compile(REGEX_CHAPTER, Pattern.CASE_INSENSITIVE)
+        val matcher: Matcher = pattern.matcher(text)
+
+        return if (matcher.find()) {
+            matcher.group(2)?.toFloat()
+        } else {
+            val failedChapterNumberPattern: Pattern =
+                Pattern.compile(REGEX_PART_NUMBER, Pattern.CASE_INSENSITIVE)
+            val failedChapterNumberMatcher: Matcher =
+                failedChapterNumberPattern.matcher(text)
+            if (failedChapterNumberMatcher.find()) {
+                failedChapterNumberMatcher.group(1)?.toFloat()
+            } else {
+                text.toFloatOrNull()
+            }
+        }
+    }
 
 }
