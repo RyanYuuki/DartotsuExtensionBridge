@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dartotsu_extension_bridge/Settings/Settings.dart';
+import 'package:dartotsu_extension_bridge/Sora/sora_ext_manager.dart';
 import 'package:get/get.dart';
 
 import 'Aniyomi/AniyomiExtensions.dart';
@@ -60,7 +61,8 @@ List<ExtensionType> get getSupportedExtensions =>
 
 enum ExtensionType {
   mangayomi,
-  aniyomi;
+  aniyomi,
+  sora;
 
   Extension getManager() {
     switch (this) {
@@ -68,6 +70,8 @@ enum ExtensionType {
         return Get.find<AniyomiExtensions>(tag: 'AniyomiExtensions');
       case ExtensionType.mangayomi:
         return Get.find<MangayomiExtensions>(tag: 'MangayomiExtensions');
+      case ExtensionType.sora:
+        return Get.find<SoraExtensionManager>(tag: 'SoraExtensions');
     }
   }
 
@@ -78,6 +82,8 @@ enum ExtensionType {
         return 'Aniyomi';
       case ExtensionType.mangayomi:
         return 'Mangayomi';
+      case ExtensionType.sora:
+        return 'Sora';
     }
   }
 
